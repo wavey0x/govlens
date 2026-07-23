@@ -213,9 +213,15 @@ def test_investigation_uses_only_categorical_severity_and_covers_every_action() 
         _validate(incomplete, proposal)
 
     too_long = high_analysis()
-    too_long["summary_sentences"].append("A fourth sentence is not allowed.")
+    too_long["summary_sentences"].append("A fourth summary item is not allowed.")
     with pytest.raises(AuditError, match="Telegram summary"):
         _validate(too_long, proposal)
+
+    natural = high_analysis()
+    natural["summary_sentences"] = [
+        "The DAO replaces the PairAdder. The new path remains bounded by Core permissions."
+    ]
+    assert _validate(natural, proposal)["summary_sentences"] == natural["summary_sentences"]
 
     numbered = high_analysis()
     numbered["summary_sentences"] = ["Action 0 replaces the PairAdder."]

@@ -117,12 +117,13 @@ risk policy, and it is selected by an explicit protocol mapping rather than a
 plugin loader.
 
 Codex starts from the normalized proposal, parent evidence, and protocol context.
-It uses additional source, state, trace, or fork work only to close a material
-gap, and does not repeat a passing deterministic proof without a concrete
-conflict. It must still account for every action, resolve relevant proxies and
-wrappers, compare text to execution, and exercise a verdict-relevant real
-authority path. Forks and traces are evidence, not proof. Delivery credentials
-are not passed to Codex.
+Within its bounded execution window, it uses judgment to pursue additional
+source, state, trace, or fork work that could materially inform the verdict or
+expose a broader issue. It does not repeat a passing deterministic proof without
+a concrete conflict. It must still account for every action, resolve relevant
+proxies and wrappers, compare text to execution, and exercise a verdict-relevant
+real authority path. Forks and traces are evidence, not proof. Delivery
+credentials are not passed to Codex.
 
 The investigation makes a best-effort search for a corresponding discussion on
 the protocol's checked-in official governance forum host. Forum and search
@@ -148,9 +149,9 @@ unknowns[]
 
 The parent rejects missing or reordered actions, malformed output, a `LOW`
 result with proposal/model unknowns, and a `LOW` result with any non-passing
-applicable deterministic check. All report prose is direct engineer-to-engineer
-writing and describes transactions by effect; the deterministic renderer owns
-numbered action headings.
+applicable deterministic check. Reports use clear, natural prose for technical
+DeFi professionals and describe transactions by effect; the deterministic
+renderer owns numbered action headings.
 
 ## Presentation and delivery
 
@@ -195,7 +196,8 @@ and Telegram delivery remain single-threaded. Only a run holding this lock
 recovers interrupted publication or send states to `review`; `govlens check`
 opens an existing database read-only.
 
-Codex has a 15-minute hard timeout. Standard-library logs go to stderr and
+Codex has an application-enforced hard timeout, and the prompt receives its
+execution budget from that same value. Standard-library logs go to stderr and
 record sanitized run, source, proposal, check, analysis, and delivery lifecycle
 events with durations. Only the `govlens` logger runs at `INFO`; dependency
 loggers remain at `WARNING`. Logs never contain proposal text, calldata, RPC

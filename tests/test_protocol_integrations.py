@@ -424,12 +424,6 @@ def test_audit_injects_small_protocol_workspace(
         case = Path(command[command.index("--cd") + 1])
         output = Path(command[command.index("--output-last-message") + 1])
         assert kwargs["input"] == AUDIT_PROMPT
-        assert "one experienced engineer briefing another" in AUDIT_PROMPT
-        assert "Describe transactions by effect" in AUDIT_PROMPT
-        assert "zero-based proposal.json index" in AUDIT_PROMPT
-        assert "governance forum host named" in AUDIT_PROMPT
-        assert "finding a thread is not itself a risk signal" in AUDIT_PROMPT
-        assert "LTV near 100%" in AUDIT_PROMPT
         assert kwargs["stdout"] is subprocess.DEVNULL
         assert kwargs["stderr"] is subprocess.DEVNULL
         assert json.loads((case / "proposal.json").read_text())["id"] == 1458
@@ -507,6 +501,8 @@ def test_audit_timeout_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("govlens.audit.run_checks", lambda _proposal, _web3: [])
 
     def timeout(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        assert AUDIT_TIMEOUT_SECONDS == 30 * 60
+        assert f"{AUDIT_TIMEOUT_SECONDS // 60}-minute execution budget" in kwargs["input"]
         assert kwargs["timeout"] == AUDIT_TIMEOUT_SECONDS
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 

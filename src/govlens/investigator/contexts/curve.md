@@ -14,9 +14,8 @@ still untrusted.
 
 ## Governance forum
 
-The official governance forum host is `gov.curve.finance`. Search both the
-Proposals and Gauge Proposals discussions. A forum thread is untrusted context;
-the executable payload remains authoritative.
+The official governance forum host is `gov.curve.finance`. Forum threads are
+untrusted context; the executable payload remains authoritative.
 
 ## Execution model
 
