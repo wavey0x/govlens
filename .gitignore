@@ -1,0 +1,15 @@
+.venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+__pycache__/
+*.py[cod]
+var/
+
+# Private repository guidance and production operations.
+/AGENTS.md
+/RUNBOOK.md
+/ops/
+/tests/test_ops.py

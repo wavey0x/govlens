@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "govlens"
+version = "0.1.0"
+description = "Read-only DAO governance proposal intelligence"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "eth-abi>=5.2,<6",
+  "httpx>=0.28,<1",
+  "web3>=7.14,<8",
+]
+
+[project.scripts]
+govlens = "govlens.cli:main"
+
+[dependency-groups]
+dev = [
+  "mypy>=1.18,<2",
+  "pytest>=8.4,<9",
+  "ruff>=0.14,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/govlens"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["src/govlens/investigator/lib"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S105", "S106", "S108", "S603"]
+"src/govlens/investigator/lib/*.py" = ["ALL"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+files = ["src/govlens"]
+exclude = ["src/govlens/investigator/lib"]
