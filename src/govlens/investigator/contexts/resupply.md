@@ -29,3 +29,7 @@ is installed or reconfigured, exercise the intended path: Voter → Core.execute
 not prove this nested path works. For in-proposal deployments, verify the
 deployer's returned address against subsequent registration actions in the same
 ordered simulation; a creation-block `deployInfo` read alone is insufficient.
+
+Resupply collateral is stablecoin-denominated receipt tokens, so its default
+LTV is intentionally high; assess depeg, vault, oracle, redemption-liquidity,
+and liquidation risks rather than treating the LTV alone as anomalous.

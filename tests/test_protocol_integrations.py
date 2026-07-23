@@ -362,6 +362,14 @@ def test_protocol_context_names_official_forum(context: str, forum: str) -> None
     assert forum in path.read_text()
 
 
+def test_resupply_context_explains_high_default_ltv() -> None:
+    path = Path(__file__).parents[1] / "src/govlens/investigator/contexts" / "resupply.md"
+
+    context = path.read_text()
+    assert "stablecoin-denominated receipt tokens" in context
+    assert "rather than treating the LTV alone as anomalous" in context
+
+
 def test_audit_uses_fallback_for_oversized_model_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
