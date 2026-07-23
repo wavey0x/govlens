@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -14,6 +15,7 @@ PUBLIC_BASE = "https://gist.wavey.info"
 GIST_ID = re.compile(r"^[A-Za-z0-9]{16,64}$")
 GIST_PATH = re.compile(r"^/[A-Za-z0-9]{16,64}$")
 MAX_REPORT_BYTES = 64 * 1024
+REPORT_FILENAME = "README.md"
 
 
 class GistError(RuntimeError):
@@ -55,6 +57,52 @@ def validate_gist_url(url: str) -> str:
     return url
 
 
+def _snapshot_sha256(title: str, content_sha256: str) -> str:
+    manifest = {
+        "version": 1,
+        "title": title,
+        "files": [
+            {
+                "filename": REPORT_FILENAME,
+                "content_sha256": content_sha256,
+            }
+        ],
+    }
+    encoded = json.dumps(
+        manifest,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _matches_snapshot(
+    body: object,
+    *,
+    title: str,
+    markdown: str,
+    content_sha256: str,
+    snapshot_sha256: str,
+) -> bool:
+    if not isinstance(body, dict):
+        return False
+    files = body.get("files")
+    if not isinstance(files, dict) or set(files) != {REPORT_FILENAME}:
+        return False
+    report = files.get(REPORT_FILENAME)
+    return (
+        isinstance(report, dict)
+        and body.get("title") == title
+        and body.get("primary_file") == REPORT_FILENAME
+        and body.get("snapshot_sha256") == snapshot_sha256
+        and report.get("filename") == REPORT_FILENAME
+        and report.get("content") == markdown
+        and report.get("content_sha256") == content_sha256
+        and report.get("byte_size") == len(markdown.encode("utf-8"))
+    )
+
+
 class Gist:
     def __init__(self, key: str, *, client: httpx.Client | None = None) -> None:
         self.key = key
@@ -81,6 +129,7 @@ class Gist:
         if not self.key:
             raise GistError("Wavey Gist credential is not configured")
         digest = hashlib.sha256(encoded).hexdigest()
+        snapshot_digest = _snapshot_sha256(title, digest)
         try:
             response = self.client.post(
                 f"{API_BASE}/gists",
@@ -89,7 +138,10 @@ class Gist:
                     "Content-Type": "application/json",
                     "User-Agent": "govlens/0.1",
                 },
-                json={"title": title, "markdown": markdown},
+                json={
+                    "title": title,
+                    "files": {REPORT_FILENAME: {"content": markdown}},
+                },
             )
         except httpx.HTTPError as exc:
             raise GistUnknown("Wavey Gist publication response was lost") from exc
@@ -107,6 +159,7 @@ class Gist:
             raise GistUnknown("Wavey Gist returned malformed publication data")
         gist_id = body.get("id")
         revision = body.get("revision_number")
+        latest_revision = body.get("latest_revision_number")
         url = body.get("url")
         candidate = url if isinstance(url, str) else None
         if (
@@ -116,7 +169,16 @@ class Gist:
             or not isinstance(revision, int)
             or isinstance(revision, bool)
             or revision < 1
-            or body.get("content_sha256") != digest
+            or not isinstance(latest_revision, int)
+            or isinstance(latest_revision, bool)
+            or latest_revision < revision
+            or not _matches_snapshot(
+                body,
+                title=title,
+                markdown=markdown,
+                content_sha256=digest,
+                snapshot_sha256=snapshot_digest,
+            )
         ):
             raise GistUnknown("Wavey Gist publication data could not be verified", candidate)
 
@@ -135,9 +197,13 @@ class Gist:
             raise GistUnknown("Wavey Gist raw revision did not match", candidate)
         if (
             render.status_code != 200
-            or not isinstance(render_body, dict)
-            or render_body.get("markdown") != markdown
-            or render_body.get("content_sha256") != digest
+            or not _matches_snapshot(
+                render_body,
+                title=title,
+                markdown=markdown,
+                content_sha256=digest,
+                snapshot_sha256=snapshot_digest,
+            )
             or render_body.get("revision_number") != revision
         ):
             raise GistUnknown("Wavey Gist render revision did not match", candidate)

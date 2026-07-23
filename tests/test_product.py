@@ -678,31 +678,48 @@ def test_database_check_does_not_create_a_missing_database(tmp_path: Path) -> No
 def test_gist_publication_verifies_exact_revision() -> None:
     markdown = "# Report\n\nExact bytes.\n"
     digest = hashlib.sha256(markdown.encode()).hexdigest()
+    snapshot = hashlib.sha256(
+        json.dumps(
+            {
+                "version": 1,
+                "title": "Report",
+                "files": [{"filename": "README.md", "content_sha256": digest}],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     calls: list[str] = []
+    response = {
+        "id": "AbCdEfGhIjKlMnOp",
+        "url": GIST_URL,
+        "title": "Report",
+        "primary_file": "README.md",
+        "revision_number": 1,
+        "latest_revision_number": 1,
+        "snapshot_sha256": snapshot,
+        "files": {
+            "README.md": {
+                "filename": "README.md",
+                "content": markdown,
+                "content_sha256": digest,
+                "byte_size": len(markdown.encode()),
+            }
+        },
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(f"{request.method} {request.url}")
         if request.method == "POST":
-            return httpx.Response(
-                201,
-                json={
-                    "id": "AbCdEfGhIjKlMnOp",
-                    "url": GIST_URL,
-                    "revision_number": 1,
-                    "content_sha256": digest,
-                },
-            )
+            assert json.loads(request.content) == {
+                "title": "Report",
+                "files": {"README.md": {"content": markdown}},
+            }
+            return httpx.Response(201, json=response)
         if request.url.path.endswith("/raw"):
             return httpx.Response(200, content=markdown.encode())
         if request.url.host == "api.wavey.info":
-            return httpx.Response(
-                200,
-                json={
-                    "markdown": markdown,
-                    "content_sha256": digest,
-                    "revision_number": 1,
-                },
-            )
+            return httpx.Response(200, json=response)
         return httpx.Response(200, text="<html>report</html>")
 
     client = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False)
