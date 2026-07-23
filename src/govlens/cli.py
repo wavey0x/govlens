@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -98,6 +99,38 @@ def _telegrams(settings: Settings) -> dict[str, Telegram]:
 def _close_telegrams(telegrams: dict[str, Telegram]) -> None:
     for telegram in telegrams.values():
         telegram.close()
+
+
+def _sandbox_ready() -> bool:
+    bwrap = shutil.which("bwrap")
+    if bwrap is None:
+        return False
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [
+                bwrap,
+                "--unshare-user",
+                "--uid",
+                "0",
+                "--gid",
+                "0",
+                "--ro-bind",
+                "/",
+                "/",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "/usr/bin/true",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
 
 
 def _run() -> int:
@@ -201,6 +234,7 @@ def _check() -> int:
         "codex": settings.codex.is_file(),
         "gist": bool(settings.gist_key),
         "investigator_helpers": Path(__file__).with_name("investigator").joinpath("lib").is_dir(),
+        "sandbox": _sandbox_ready(),
     }
     sources: tuple[ProposalSource, ...] = ()
     try:
