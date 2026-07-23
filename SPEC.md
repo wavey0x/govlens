@@ -173,7 +173,17 @@ prompts, or risk policy. There is no configuration parser or protocol DSL.
 For every normalized proposal, `report.py` renders a self-contained report
 containing metadata, trusted links, text, complete payload, every action and raw
 byte sequence, canonical checks and evidence, findings, and unknowns. Model
-output cannot supply report structure or trusted links.
+output cannot supply report structure or trusted links. The report has one
+summary section containing the verdict, findings, unknowns, and check outcomes,
+plus one compact actions section. Repeated executors and values are grouped,
+while complete calldata, differing raw bytes, and exact check evidence remain in
+one bounded raw-evidence block.
+
+For readability, the trusted parent makes a best-effort decode of each action
+against the target's verified ABI and canonically re-encodes it before display.
+An unavailable or non-canonical decode never blocks delivery or replaces the
+exact bytes. Structured Ethereum addresses, creation transactions, and block
+numbers link only to trusted Etherscan URLs constructed by the renderer.
 
 `gist.py` and `telegram.py` are the only external-write modules. One global bot
 token, named chat IDs, and explicit Curve and Resupply selectors come from the

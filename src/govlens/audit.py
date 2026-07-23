@@ -14,6 +14,7 @@ from typing import Any
 
 from web3 import Web3
 
+from .calldata import decode_actions
 from .checks import CheckResult, run_checks
 from .config import Settings
 from .model import Proposal
@@ -371,6 +372,23 @@ def _run_codex(
         return result
 
 
+def _with_decoded_actions(
+    settings: Settings,
+    proposal: Proposal,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    result["decoded_actions"] = decode_actions(proposal, settings.etherscan_key)
+    LOG.info(
+        "event=calldata_decoded protocol=%s source=%s proposal=%d decoded=%d actions=%d",
+        proposal.protocol,
+        proposal.source,
+        proposal.id,
+        len(result["decoded_actions"]),
+        len(proposal.actions),
+    )
+    return result
+
+
 def investigate(settings: Settings, proposal: Proposal) -> dict[str, Any]:
     evidence_web3 = Web3(
         Web3.HTTPProvider(settings.archive_rpc_url, request_kwargs={"timeout": 60})
@@ -399,7 +417,11 @@ def investigate(settings: Settings, proposal: Proposal) -> dict[str, Any]:
             proposal.source,
             proposal.id,
         )
-        return _fallback([], checks_failed=True)
+        return _with_decoded_actions(
+            settings,
+            proposal,
+            _fallback([], checks_failed=True),
+        )
     LOG.info(
         "event=checks_completed protocol=%s source=%s proposal=%d statuses=%s duration_ms=%d",
         proposal.protocol,
@@ -410,7 +432,7 @@ def investigate(settings: Settings, proposal: Proposal) -> dict[str, Any]:
     )
 
     try:
-        return _run_codex(settings, proposal, checks)
+        result = _run_codex(settings, proposal, checks)
     except AuditError as exc:
         LOG.warning(
             "event=analysis_fallback protocol=%s source=%s proposal=%d reason=%s",
@@ -419,4 +441,5 @@ def investigate(settings: Settings, proposal: Proposal) -> dict[str, Any]:
             proposal.id,
             exc.code,
         )
-        return _fallback(checks)
+        result = _fallback(checks)
+    return _with_decoded_actions(settings, proposal, result)

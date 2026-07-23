@@ -33,3 +33,7 @@ ordered simulation; a creation-block `deployInfo` read alone is insufficient.
 Resupply collateral is stablecoin-denominated receipt tokens, so its default
 LTV is intentionally high; assess depeg, vault, oracle, redemption-liquidity,
 and liquidation risks rather than treating the LTV alone as anomalous.
+Borrow limits cap potential debt rather than create it, and borrowing can grow
+only as users supply eligible collateral. Low current vault liquidity may
+matter for liquidation or redemption, but a ceiling above current assets is
+not by itself a finding.

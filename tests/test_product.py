@@ -10,8 +10,11 @@ from typing import Any
 
 import httpx
 import pytest
+from eth_abi import encode
+from web3 import Web3
 
 from govlens.audit import AuditError, _validate
+from govlens.calldata import _decode
 from govlens.cli import _configure_logging, _run_lock
 from govlens.config import Settings
 from govlens.gist import Gist, GistUnknown, PublishedGist
@@ -252,11 +255,72 @@ def test_full_report_contains_complete_analysis_and_every_calldata_byte() -> Non
 
     assert report.startswith("# Resupply Proposal 23 Audit — HIGH")
     assert "ReentrancyGuardReentrantCall" in report
-    assert "## Unknowns\n\nNone." in report
+    assert [line for line in report.splitlines() if line.startswith("## ")] == [
+        "## Summary",
+        "## Actions",
+    ]
+    assert "## Findings" not in report
+    assert "## Unknowns" not in report
+    assert "## Protocol checks" not in report
+    assert "**Unknown:**" not in report
+    assert "**Executor:** [`0xc07e…0a7d`](https://etherscan.io/address/" in report
+    assert "**Value:** 0 wei for all calls" in report
+    assert "[`tx 0x0527…6589`](https://etherscan.io/tx/" in report
+    assert "[created block 25,567,289](https://etherscan.io/block/25567289)" in report
+    assert report.count("### Raw evidence") == 1
+    assert len(report.splitlines()) < 60
     for action in proposal.actions:
-        assert action.calldata in report
-        assert action.executor in report
-        assert action.target in report
+        assert f"action[{action.index + 1}].calldata={action.calldata}" in report
+        assert f"https://etherscan.io/address/{action.target}" in report
+
+
+def test_report_renders_compact_canonical_verified_abi_decode() -> None:
+    abi = [
+        {
+            "type": "function",
+            "name": "setLimit",
+            "stateMutability": "nonpayable",
+            "inputs": [
+                {"name": "_pair", "type": "address"},
+                {"name": "_limit", "type": "uint256"},
+            ],
+            "outputs": [],
+        }
+    ]
+    target = "0x0950000465476F4470e74AeD93E7dd414012BB7D"
+    pair = "0xEcceF525b3063705DA5075a1ce5De1892D24C25A"
+    selector = Web3.keccak(text="setLimit(address,uint256)")[:4]
+    calldata = "0x" + (selector + encode(["address", "uint256"], [pair, 10**25])).hex()
+    action = replace(
+        proposal_23().actions[0],
+        target=target,
+        calldata=calldata,
+    )
+
+    decoded = _decode(action, abi)
+
+    assert decoded == {
+        "action_index": 0,
+        "function": "setLimit(address,uint256)",
+        "inputs": [
+            {"name": "_pair", "type": "address", "value": pair},
+            {"name": "_limit", "type": "uint256", "value": "10,000,000,000,000,000,000,000,000"},
+        ],
+    }
+    analysis = high_analysis()
+    analysis["decoded_actions"] = [decoded]
+    report = build_report(
+        presentation_for("resupply"),
+        replace(proposal_23(), actions=[action]),
+        analysis,
+    )
+    assert "`setLimit(address,uint256)`" in report
+    assert f"`_pair` = [`{pair[:6]}…{pair[-4:]}`](https://etherscan.io/address/{pair})" in report
+    assert "`_limit` = 10,000,000,000,000,000,000,000,000" in report
+    assert "**Decoded call:**" not in report
+    assert "### Action 1" not in report
+    assert action.calldata in report
+    assert _decode(replace(action, calldata=action.calldata + "00"), abi) is None
 
 
 def test_report_renders_raw_payload_parent_checks_and_normalization_unknowns() -> None:
@@ -293,14 +357,43 @@ def test_report_renders_raw_payload_parent_checks_and_normalization_unknowns() -
 
     report = build_report(presentation_for("resupply"), proposal, analysis)
 
-    assert "## Protocol checks" in report
-    assert "fixture.provenance — PASS" in report
-    assert "request: 0x12345678" in report
-    assert "result: 0x01" in report
-    assert "0xfeedface" in report
-    assert "0xdeadbeef" in report
+    assert "## Protocol checks" not in report
+    assert "**Check — fixture.provenance (PASS):** Fixture provenance is proven." in report
+    assert "governance_payload=0xfeedface" in report
+    assert "action[1].raw=0xdeadbeef" in report
+    assert "check[1].evidence[1].request=0x12345678" in report
+    assert "check[1].evidence[1].result=0x01" in report
     assert "Fixture wrapper is unresolved" in report
-    assert "Fixture proposal unknown" in report
+    assert "- **Unknown:** Fixture proposal unknown" in report
+
+
+def test_report_keeps_differing_action_authority_and_value_inline() -> None:
+    proposal = proposal_23()
+    second = replace(
+        proposal.actions[1],
+        executor="0x2222222222222222222222222222222222222222",
+        value_wei=1,
+    )
+    proposal = replace(
+        proposal,
+        description=proposal.title + "\n\nAdditional proposal context.",
+        actions=[proposal.actions[0], second],
+    )
+    analysis = high_analysis()
+    analysis["findings"] = [f"Review the target {proposal.actions[0].target} before execution."]
+
+    report = build_report(presentation_for("resupply"), proposal, analysis)
+
+    assert "**Value:** 0 wei for all calls" not in report
+    assert " · via [`0xc07e…0a7d`](https://etherscan.io/address/" in report
+    assert " · via [`0x2222…2222`](https://etherscan.io/address/" in report
+    assert " · 0 wei" in report
+    assert " · 1 wei" in report
+    assert "> Additional proposal context." in report
+    assert (
+        f"[`{proposal.actions[0].target[:6]}…{proposal.actions[0].target[-4:]}`]"
+        f"(https://etherscan.io/address/{proposal.actions[0].target})"
+    ) in report
 
 
 def test_shared_renderer_handles_a_protocol_with_one_link() -> None:
