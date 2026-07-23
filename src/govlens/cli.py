@@ -7,6 +7,7 @@ import fcntl
 import json
 import logging
 import os
+import shutil
 import sys
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -195,6 +196,8 @@ def _test(
 def _check() -> int:
     settings = Settings.load()
     checks: dict[str, bool] = {
+        "anvil": shutil.which("anvil") is not None,
+        "cast": shutil.which("cast") is not None,
         "codex": settings.codex.is_file(),
         "gist": bool(settings.gist_key),
         "investigator_helpers": Path(__file__).with_name("investigator").joinpath("lib").is_dir(),

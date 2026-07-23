@@ -57,7 +57,7 @@ def build_message(
         (
             "",
             f"{ICONS[severity]} <b>Risk: {html.escape(severity)}</b>",
-            " ".join(html.escape(item) for item in analysis["summary_sentences"]),
+            html.escape(analysis["summary"]),
             "",
         )
     )

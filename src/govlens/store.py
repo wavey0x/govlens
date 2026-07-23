@@ -203,9 +203,6 @@ class Store:
                 (message_id, *self._identity(key)),
             )
 
-    def no_alert(self, key: ProposalKey) -> None:
-        self._status(key, "no_alert")
-
     def review(self, key: ProposalKey, gist_url: str | None = None) -> None:
         with self.connection:
             if gist_url:

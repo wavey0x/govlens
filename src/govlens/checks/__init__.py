@@ -1,4 +1,4 @@
-"""Deterministic, block-pinned protocol checks run by the trusted parent."""
+"""Narrow, block-pinned checks backed by canonical protocol validators."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class CheckResult:
 def _chain_id(web3: Web3) -> int:
     chain_id = int(web3.eth.chain_id)
     if chain_id != MAINNET_CHAIN_ID:
-        raise RuntimeError("deterministic checks require Ethereum mainnet")
+        raise RuntimeError("canonical checks require Ethereum mainnet")
     return chain_id
 
 
@@ -76,13 +76,9 @@ def rpc_code(web3: Web3, target: str, block: int) -> tuple[bytes, RpcEvidence]:
 
 
 def run_checks(proposal: Proposal, web3: Web3) -> list[CheckResult]:
-    _chain_id(web3)
     if proposal.protocol == "curve":
+        _chain_id(web3)
         from .curve import run
-
-        return run(proposal, web3)
-    if proposal.protocol == "resupply":
-        from .resupply import run
 
         return run(proposal, web3)
     return []

@@ -17,7 +17,6 @@ from govlens.audit import (
     AUDIT_PROMPT,
     AUDIT_TIMEOUT_SECONDS,
     MAX_RESULT_BYTES,
-    AuditError,
     _validate,
     investigate,
 )
@@ -31,20 +30,6 @@ from govlens.checks.curve import (
 from govlens.checks.curve import (
     run as run_curve_checks,
 )
-from govlens.checks.resupply import (
-    ADD_PAIR,
-    CORE,
-    DEPLOY_INFO,
-    GET_ADDRESS,
-    PAIR_ADDER_REGISTRY,
-    PAIR_ADDERS,
-    PAIR_DEPLOYER_KEY,
-    REGISTRY,
-    SET_ADDRESS,
-)
-from govlens.checks.resupply import (
-    run as run_resupply_checks,
-)
 from govlens.config import Settings
 from govlens.curve import CALLSCRIPT_ID, Curve
 from govlens.model import Action, Fact, Proposal
@@ -53,8 +38,6 @@ from govlens.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GAUGE = Web3.to_checksum_address("0xA49EB49F7e4C86D93f6EA8b81e4863aC4c3B4891")
-DEPLOYER = Web3.to_checksum_address("0x5555555558B7309ecB0FbB23e609ec3c6f74C2Ea")
-PAIR = Web3.to_checksum_address("0x222222220D1e47a777A2983c924c0360a68bd4f8")
 BLOCK = 25_582_242
 
 
@@ -85,13 +68,10 @@ def _proposal(
 
 
 def _analysis(action_count: int, severity: str = "MEDIUM") -> dict[str, Any]:
+    del action_count
     return {
         "severity": severity,
-        "summary_sentences": ["The fixture has bounded effects."],
-        "actions": [
-            {"index": index, "effect": "Known effect.", "risk": "Known risk."}
-            for index in range(action_count)
-        ],
+        "summary": "The fixture has bounded effects.",
         "findings": [],
         "unknowns": [],
     }
@@ -118,10 +98,6 @@ class FakeEth:
 class FakeWeb3:
     def __init__(self) -> None:
         self.eth = FakeEth()
-
-
-def _address_result(address: str) -> bytes:
-    return encode(["address"], [address])
 
 
 def test_curve_callscript_fixture_preserves_every_byte_and_effective_action() -> None:
@@ -239,90 +215,17 @@ def test_curve_1452_routes_both_gauges_through_validator() -> None:
     assert all(result.id == "curve.gauge_validator" for result in results)
 
 
+def test_resupply_leaves_sequence_sensitive_checks_to_the_audit() -> None:
+    proposal = _proposal([], protocol="resupply", source="resupply")
+    web3 = FakeWeb3()
+    web3.eth.chain_id = 10
+
+    assert run_checks(proposal, web3) == []  # type: ignore[arg-type]
+    assert web3.eth.blocks == []
+
+
 def proposal_executor() -> str:
     return "0x2222222222222222222222222222222222222222"
-
-
-def test_resupply_pair_check_proves_dynamic_pair_deployer_record() -> None:
-    calldata = ADD_PAIR + encode(["address"], [PAIR])
-    proposal = _proposal(
-        [Action(0, proposal_executor(), REGISTRY, 0, "0x" + calldata.hex())],
-        protocol="resupply",
-        source="resupply",
-    )
-    web3 = FakeWeb3()
-    pointer = GET_ADDRESS + encode(["string"], [PAIR_DEPLOYER_KEY])
-    info = DEPLOY_INFO + encode(["address"], [PAIR])
-    web3.eth.calls[(REGISTRY.casefold(), pointer)] = _address_result(DEPLOYER)
-    web3.eth.calls[(DEPLOYER.casefold(), info)] = encode(["uint40", "uint40"], [7, 12345])
-    web3.eth.codes[DEPLOYER.casefold()] = b"\x60"
-
-    result = run_resupply_checks(proposal, web3)[0]  # type: ignore[arg-type]
-
-    assert result.status == "PASS"
-    assert "protocol 7" in result.summary
-    assert set(web3.eth.blocks) == {BLOCK}
-
-
-def test_resupply_pair_check_rejects_missing_deployment_record() -> None:
-    calldata = ADD_PAIR + encode(["address"], [PAIR])
-    proposal = _proposal(
-        [Action(0, proposal_executor(), REGISTRY, 0, "0x" + calldata.hex())],
-        protocol="resupply",
-        source="resupply",
-    )
-    web3 = FakeWeb3()
-    pointer = GET_ADDRESS + encode(["string"], [PAIR_DEPLOYER_KEY])
-    info = DEPLOY_INFO + encode(["address"], [PAIR])
-    web3.eth.calls[(REGISTRY.casefold(), pointer)] = _address_result(DEPLOYER)
-    web3.eth.calls[(DEPLOYER.casefold(), info)] = encode(["uint40", "uint40"], [0, 0])
-    web3.eth.codes[DEPLOYER.casefold()] = b"\x60"
-
-    assert run_resupply_checks(proposal, web3)[0].status == "FAIL"  # type: ignore[arg-type]
-
-
-def test_resupply_pairadder_check_proves_binding_and_deployer() -> None:
-    pair_adder = next(iter(PAIR_ADDERS))
-    calldata = ADD_PAIR + encode(["address"], [PAIR])
-    proposal = _proposal(
-        [Action(0, proposal_executor(), pair_adder, 0, "0x" + calldata.hex())],
-        protocol="resupply",
-        source="resupply",
-    )
-    web3 = FakeWeb3()
-    pointer = GET_ADDRESS + encode(["string"], [PAIR_DEPLOYER_KEY])
-    info = DEPLOY_INFO + encode(["address"], [PAIR])
-    web3.eth.calls[(pair_adder.casefold(), PAIR_ADDER_REGISTRY)] = _address_result(REGISTRY)
-    web3.eth.calls[(pair_adder.casefold(), CORE)] = _address_result(proposal_executor())
-    web3.eth.calls[(REGISTRY.casefold(), pointer)] = _address_result(DEPLOYER)
-    web3.eth.calls[(DEPLOYER.casefold(), info)] = encode(["uint40", "uint40"], [7, 12345])
-    web3.eth.codes[DEPLOYER.casefold()] = b"\x60"
-
-    result = run_resupply_checks(proposal, web3)[0]  # type: ignore[arg-type]
-
-    assert result.status == "PASS"
-    assert len(result.evidence) == 5
-
-
-def test_resupply_check_does_not_use_stale_pointer_after_ordered_change() -> None:
-    replacement = "0x4444444444444444444444444444444444444444"
-    set_pointer = SET_ADDRESS + encode(["string", "address"], [PAIR_DEPLOYER_KEY, replacement])
-    add_pair = ADD_PAIR + encode(["address"], [PAIR])
-    proposal = _proposal(
-        [
-            Action(0, proposal_executor(), REGISTRY, 0, "0x" + set_pointer.hex()),
-            Action(1, proposal_executor(), REGISTRY, 0, "0x" + add_pair.hex()),
-        ],
-        protocol="resupply",
-        source="resupply",
-    )
-    web3 = FakeWeb3()
-
-    result = run_resupply_checks(proposal, web3)[0]  # type: ignore[arg-type]
-
-    assert result.status == "UNKNOWN"
-    assert "earlier action" in result.summary
-    assert web3.eth.blocks == []
 
 
 def test_sources_and_checks_reject_non_mainnet_rpc() -> None:
@@ -343,10 +246,9 @@ def test_sources_and_checks_reject_non_mainnet_rpc() -> None:
         run_checks(_proposal([]), web3)  # type: ignore[arg-type]
 
 
-def test_nonpassing_parent_check_and_normalization_unknown_forbid_low() -> None:
+def test_nonpassing_parent_check_and_normalization_unknown_promote_low() -> None:
     proposal = _proposal([], unknowns=("wrapper unresolved",))
-    with pytest.raises(AuditError, match="MEDIUM"):
-        _validate(_analysis(0, "LOW"), proposal)
+    assert _validate(_analysis(0, "LOW"), proposal)["severity"] == "MEDIUM"
 
     clean = replace(proposal, unknowns=())
     unknown_check = CheckResult(
@@ -356,8 +258,7 @@ def test_nonpassing_parent_check_and_normalization_unknown_forbid_low() -> None:
         summary="Unknown.",
         evidence=(),
     )
-    with pytest.raises(AuditError, match="MEDIUM"):
-        _validate(_analysis(0, "LOW"), clean, [unknown_check])
+    assert _validate(_analysis(0, "LOW"), clean, [unknown_check])["severity"] == "MEDIUM"
 
 
 def test_store_keeps_equal_ids_from_curve_sources_distinct(tmp_path: Path) -> None:
@@ -424,6 +325,10 @@ def test_audit_injects_small_protocol_workspace(
         case = Path(command[command.index("--cd") + 1])
         output = Path(command[command.index("--output-last-message") + 1])
         assert kwargs["input"] == AUDIT_PROMPT
+        assert "best-effort creation-block fork" in kwargs["input"]
+        assert "execution of every ordered payload" in kwargs["input"]
+        assert "routine ballot mechanics is unnecessary" in kwargs["input"]
+        assert "keep that as an unknown" in kwargs["input"]
         assert kwargs["stdout"] is subprocess.DEVNULL
         assert kwargs["stderr"] is subprocess.DEVNULL
         assert json.loads((case / "proposal.json").read_text())["id"] == 1458
@@ -457,7 +362,7 @@ def test_protocol_context_names_official_forum(context: str, forum: str) -> None
     assert forum in path.read_text()
 
 
-def test_audit_rejects_oversized_model_output(
+def test_audit_uses_fallback_for_oversized_model_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     codex = tmp_path / "codex"
@@ -481,8 +386,13 @@ def test_audit_rejects_oversized_model_output(
 
     monkeypatch.setattr("govlens.audit.subprocess.run", fake_run)
 
-    with pytest.raises(AuditError, match="size limit"):
-        investigate(settings, _proposal([]))
+    result = investigate(settings, _proposal([]))
+
+    assert result["severity"] == "MEDIUM"
+    assert result["checks"] == []
+    assert result["unknowns"] == [
+        "The Codex investigation did not return a usable result; manual review is required."
+    ]
 
 
 def test_audit_timeout_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -508,5 +418,75 @@ def test_audit_timeout_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr("govlens.audit.subprocess.run", timeout)
 
-    with pytest.raises(AuditError, match="timed out"):
-        investigate(settings, _proposal([]))
+    result = investigate(settings, _proposal([]))
+
+    assert result["severity"] == "MEDIUM"
+    assert result["checks"] == []
+    assert "manual review" in result["unknowns"][0]
+
+
+def test_audit_uses_fallback_for_invalid_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    codex = tmp_path / "codex"
+    codex.write_text("fixture")
+    settings = Settings(
+        rpc_url="http://rpc.invalid",
+        archive_rpc_url="http://archive.invalid",
+        etherscan_key="",
+        gist_key="",
+        telegram_token="",
+        telegram_targets={},
+        database=tmp_path / "state.db",
+        codex=codex,
+    )
+    monkeypatch.setattr("govlens.audit.run_checks", lambda _proposal, _web3: [])
+
+    def fake_run(command: list[str], **_kwargs: Any) -> SimpleNamespace:
+        output = Path(command[command.index("--output-last-message") + 1])
+        output.write_text("untrusted model content")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("govlens.audit.subprocess.run", fake_run)
+
+    with caplog.at_level("WARNING", logger="govlens.audit"):
+        result = investigate(settings, _proposal([]))
+
+    assert result["severity"] == "MEDIUM"
+    assert result["checks"] == []
+    assert "manual review" in result["summary"]
+    assert "reason=invalid_json" in caplog.text
+    assert "untrusted model content" not in caplog.text
+
+
+def test_audit_uses_fallback_when_checks_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = Settings(
+        rpc_url="http://rpc.invalid",
+        archive_rpc_url="http://archive.invalid",
+        etherscan_key="",
+        gist_key="",
+        telegram_token="",
+        telegram_targets={},
+        database=tmp_path / "state.db",
+        codex=tmp_path / "codex",
+    )
+
+    def fail_checks(_proposal: Proposal, _web3: Web3) -> list[CheckResult]:
+        raise RuntimeError("untrusted RPC failure")
+
+    monkeypatch.setattr("govlens.audit.run_checks", fail_checks)
+    monkeypatch.setattr(
+        "govlens.audit.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("Codex should not run without parent checks"),
+    )
+
+    result = investigate(settings, _proposal([]))
+
+    assert result["severity"] == "MEDIUM"
+    assert result["checks"] == []
+    assert result["findings"] == []
+    assert "Deterministic protocol checks could not be completed" in result["unknowns"][0]

@@ -1,9 +1,10 @@
 # GovLens
 
 GovLens is a read-only governance watcher. One timer-triggered command discovers
-finalized proposals, normalizes every action byte, runs deterministic protocol
-checks, asks Codex for one protocol-neutral audit, stores the result in SQLite,
-and alerts `wavey alerts` only for `MEDIUM` or higher risk.
+finalized proposals, normalizes every action byte, runs narrow checks backed by
+canonical protocol validators where available, asks Codex for one
+protocol-neutral audit, stores the result in SQLite, and publishes one verified
+Gist and one `wavey alerts` Telegram message for every normalized proposal.
 
 It never votes, queues, executes, signs, broadcasts, or contains a signer.
 
@@ -16,13 +17,13 @@ flowchart TD
     Sources --> First{"Source cursor exists?"}
     First -->|no| Init["Record current count; no history"]
     First -->|yes| Normalize["Preserve exact proposal and action bytes"]
-    Normalize --> Checks["Run checked-in deterministic checks"]
+    Normalize --> Checks["Run narrow canonical checks where available"]
     Checks --> Codex["Audit in an isolated workspace with vendored read-only helpers"]
-    Codex --> Validate{"Complete result and categorical policy valid?"}
-    Validate -->|no| Pending["Leave pending"]
-    Validate -->|yes| Risk{"Severity"}
-    Risk -->|LOW| Stored["Store without alert"]
-    Risk -->|MEDIUM+| Report["Render deterministic report"]
+    Codex --> Validate{"Usable result?"}
+    Validate -->|yes| Floor["Apply trusted severity floor"]
+    Validate -->|no| Fallback["Create a MEDIUM fallback"]
+    Floor --> Report["Render deterministic report"]
+    Fallback --> Report
     Report --> Gist["Publish and verify one Gist revision"]
     Gist --> Telegram["Send compact Telegram alert"]
 ```
@@ -45,8 +46,8 @@ Each source has an independent finalized cursor. A proposal is identified by
 Readers are ordinary checked-in Python code. They read at one finalized block,
 recover the unique creation event, retain the creation block and transaction,
 and emit a normalized proposal. All RPC, explorer, proposal text, metadata, and
-calldata are untrusted. Readers and deterministic checks reject any provider
-that does not identify itself as Ethereum mainnet.
+calldata are untrusted. Readers and canonical checks reject any provider that
+does not identify itself as Ethereum mainnet.
 
 The title is the complete first nonempty description line up to 512 characters.
 Only genuinely longer input is shortened at a word boundary with an explicit
@@ -72,14 +73,14 @@ are decoded to their effective target, value, and calldata. Every other wrapper
 or malformed segment is retained and marked unresolved. Phase one intentionally
 does not add Snapshot or emergency-vote sources.
 
-## Deterministic protocol checks
+## Canonical protocol checks
 
-Immediately after normalization, the trusted parent runs ordinary checked-in
-Python in `checks/` against the proposal creation block. A check records its
-status (`PASS`, `FAIL`, or `UNKNOWN`) and every decisive RPC call as chain ID,
-block, target, request, and result. View-call returns are exact; bytecode evidence
-uses its exact length and Keccak digest to keep reports bounded. There is no generic rule language,
-dynamic loading, agent-authored proof, or unpinned `latest` read.
+Immediately after normalization, the trusted parent runs only narrow checks
+backed by canonical protocol validators. A check records its status (`PASS`,
+`FAIL`, or `UNKNOWN`) and every decisive RPC call as chain ID, block, target,
+request, and result. View-call returns are exact; bytecode evidence uses its
+exact length and Keccak digest to keep reports bounded. There is no generic rule
+language, dynamic loading, agent-authored proof, or unpinned `latest` read.
 
 Curve's gauge-add check applies only to canonical calls to the checked-in Gauge
 Controller with exact `add_gauge(address,int128)` or
@@ -89,13 +90,9 @@ proposal creation block. A validator rejection is `FAIL`; an unavailable or
 ambiguous response is `UNKNOWN`. GovLens does not maintain a second factory
 allowlist.
 
-Resupply's pair-add check applies only to canonical `addPair(address)` actions
-sent directly to the checked-in Registry or through the recognized PairAdder
-shape. At the proposal creation block it reads
-`Registry.getAddress("PAIR_DEPLOYER")`, proves deployed code, and requires the
-PairDeployer's `deployInfo(pair).deployTime` to be nonzero. If an earlier action
-would change the registry pointer, the pre-state result is `UNKNOWN` and Codex
-must exercise the proposed path.
+Sequence-sensitive investigation stays with Codex, which receives the complete
+ordered payload plus source, RPC, trace, and fork helpers. Bespoke parent
+validators are not added merely to duplicate that audit work.
 
 `UNKNOWN` always forces at least `MEDIUM`. `FAIL` cannot be `LOW`. `PASS` proves
 only that check and never reduces another supported risk.
@@ -119,11 +116,19 @@ plugin loader.
 Codex starts from the normalized proposal, parent evidence, and protocol context.
 Within its bounded execution window, it uses judgment to pursue additional
 source, state, trace, or fork work that could materially inform the verdict or
-expose a broader issue. It does not repeat a passing deterministic proof without
+expose a broader issue. It does not repeat a passing canonical proof without
 a concrete conflict. It must still account for every action, resolve relevant
 proxies and wrappers, compare text to execution, and exercise a verdict-relevant
 real authority path. Forks and traces are evidence, not proof. Delivery
 credentials are not passed to Codex.
+
+Anvil and Cast are available in the isolated environment. For every executable
+payload, Codex makes a best-effort creation-block fork execution of the complete
+ordered actions through the real authorized execution boundary, checks
+top-level and nested reverts, and verifies material post-state. Routine ballot
+mechanics need not be reproduced unless they change or affect execution. An
+unavailable or incomplete faithful simulation remains an explicit unknown and
+therefore prevents `LOW`.
 
 The investigation makes a best-effort search for a corresponding discussion on
 the protocol's checked-in official governance forum host. Forum and search
@@ -141,17 +146,23 @@ The model returns only:
 
 ```text
 severity: LOW | MEDIUM | HIGH | CRITICAL
-summary_sentences: one to three strings
-actions[]: index, effect, risk
+summary: one concise string
 findings[]
 unknowns[]
 ```
 
-The parent rejects missing or reordered actions, malformed output, a `LOW`
-result with proposal/model unknowns, and a `LOW` result with any non-passing
-applicable deterministic check. Reports use clear, natural prose for technical
-DeFi professionals and describe transactions by effect; the deterministic
-renderer owns numbered action headings.
+The model does not repeat the normalized action list. The trusted renderer
+already owns every ordered action and byte; the prompt relies on the model's
+judgment to account for them without adding a second structural representation.
+The parent accepts only the small schema and bounded field types. It promotes
+`LOW` to `MEDIUM` when proposal/model unknowns or a non-passing canonical
+check require it.
+
+If canonical checks cannot run, Codex times out or fails, or its response is
+not usable, the parent creates a trusted `MEDIUM` fallback instead of repeatedly
+discarding completed work. The fallback clearly says automated analysis is
+incomplete, retains any completed canonical evidence, and requires manual
+review. Unsafe raw model output is never published.
 
 ## Presentation and delivery
 
@@ -159,10 +170,10 @@ One checked-in Python registry holds only display names, ordered optional fact
 labels, and ordered allowlisted links. It cannot alter retrieval, checks,
 prompts, or risk policy. There is no configuration parser or protocol DSL.
 
-For `MEDIUM`, `HIGH`, and `CRITICAL`, `report.py` renders a self-contained report
+For every normalized proposal, `report.py` renders a self-contained report
 containing metadata, trusted links, text, complete payload, every action and raw
-byte sequence, deterministic checks and evidence, findings, and unknowns. Model
-output cannot supply Markdown or links.
+byte sequence, canonical checks and evidence, findings, and unknowns. Model
+output cannot supply report structure or trusted links.
 
 `gist.py` and `telegram.py` are the only external-write modules. One global bot
 token, named chat IDs, and explicit Curve and Resupply selectors come from the
@@ -172,16 +183,14 @@ presentation data, proposal content, context, and model output cannot route an
 alert. GovLens verifies that Telegram resolves the exact configured group before
 publishing the Gist, caches that verification per protocol for the run, then
 digest- and revision-verifies Gist publication. Ambiguous publication or send is
-marked `review` and is never retried blindly. `LOW` is stored without either
-write.
+marked `review` and is never retried blindly.
 
 ## State
 
 SQLite stores source cursors and proposals keyed by
 `(protocol, source, upstream_id)`, accepted analysis, delivery state, verified or
 candidate Gist URL, and Telegram message ID. Delivery states are `pending`,
-`analyzed`, `publishing`, `published`, `sending`, `sent`, `no_alert`, and
-`review`.
+`analyzed`, `publishing`, `published`, `sending`, `sent`, and `review`.
 
 The database has one current schema and must be empty on first installation.
 There are no migrations, schema versions, translators, or compatibility paths.
@@ -197,12 +206,14 @@ recovers interrupted publication or send states to `review`; `govlens check`
 opens an existing database read-only.
 
 Codex has an application-enforced hard timeout, and the prompt receives its
-execution budget from that same value. Standard-library logs go to stderr and
-record sanitized run, source, proposal, check, analysis, and delivery lifecycle
-events with durations. Only the `govlens` logger runs at `INFO`; dependency
-loggers remain at `WARNING`. Logs never contain proposal text, calldata, RPC
-bodies, model output, credentials, or raw exception messages. GovLens does not
-manage log files.
+execution budget from that same value. A completed usable result is stored once;
+an expected investigation failure becomes a stored fallback and is not analyzed
+again. Standard-library logs go to stderr and record sanitized run, source,
+proposal, check, analysis, fallback reason code, and delivery lifecycle events
+with durations. Only the `govlens` logger runs at `INFO`; dependency loggers
+remain at `WARNING`. Logs never contain proposal text, calldata, RPC bodies,
+model output, credentials, or raw exception messages. GovLens does not manage
+log files.
 
 ## Commands
 

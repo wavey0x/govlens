@@ -94,28 +94,11 @@ def high_analysis() -> dict[str, Any]:
     expected = json.loads((FIXTURES / "resupply_proposal_23.json").read_text())["expected_failure"]
     return {
         "severity": "HIGH",
-        "summary_sentences": [
-            "The replacement PairAdder cannot operate through the real governance path.",
-            "Its nested Core.execute call deterministically reverts under the reentrancy guard.",
-            "Revoking the old permission therefore removes the functioning fallback.",
-        ],
-        "actions": [
-            {
-                "index": 0,
-                "effect": "Replace the Registry PAIR_ADDER address.",
-                "risk": "The replacement is operationally broken.",
-            },
-            {
-                "index": 1,
-                "effect": "Grant the replacement permission to call Registry.addPair.",
-                "risk": "Permission is bounded to the intended target and selector.",
-            },
-            {
-                "index": 2,
-                "effect": "Revoke the old PairAdder permission.",
-                "risk": "This removes the functioning fallback.",
-            },
-        ],
+        "summary": (
+            "The replacement PairAdder cannot operate through the real governance path. "
+            "Its nested Core.execute call deterministically reverts under the reentrancy "
+            "guard, and revoking the old permission removes the functioning fallback."
+        ),
         "findings": [f"{expected['path']} reverts with {expected['result']}."],
         "unknowns": [],
     }
@@ -124,7 +107,7 @@ def high_analysis() -> dict[str, Any]:
 def low_analysis() -> dict[str, Any]:
     result = high_analysis()
     result["severity"] = "LOW"
-    result["summary_sentences"] = ["The proposal has bounded, understood effects."]
+    result["summary"] = "The proposal has bounded, understood effects."
     result["findings"] = []
     return result
 
@@ -192,56 +175,40 @@ def test_proposal_preserves_every_action_byte() -> None:
     ]
 
 
-def test_investigation_uses_only_categorical_severity_and_covers_every_action() -> None:
+def test_investigation_uses_a_small_contract_without_prose_rules() -> None:
     proposal = proposal_23()
     assert _validate(high_analysis(), proposal)["severity"] == "HIGH"
 
     numeric = high_analysis()
     numeric["score"] = 3
     del numeric["severity"]
-    with pytest.raises(AuditError, match="result shape"):
+    with pytest.raises(AuditError, match="invalid_result_shape"):
         _validate(numeric, proposal)
 
     extra_field = high_analysis()
     extra_field["confidence"] = "high"
-    with pytest.raises(AuditError, match="result shape"):
+    with pytest.raises(AuditError, match="invalid_result_shape"):
         _validate(extra_field, proposal)
 
-    incomplete = high_analysis()
-    incomplete["actions"] = incomplete["actions"][:-1]
-    with pytest.raises(AuditError, match="every action"):
-        _validate(incomplete, proposal)
-
     too_long = high_analysis()
-    too_long["summary_sentences"].append("A fourth summary item is not allowed.")
-    with pytest.raises(AuditError, match="Telegram summary"):
+    too_long["summary"] = "x" * 1_001
+    with pytest.raises(AuditError, match="invalid_summary"):
         _validate(too_long, proposal)
 
     natural = high_analysis()
-    natural["summary_sentences"] = [
-        "The DAO replaces the PairAdder. The new path remains bounded by Core permissions."
-    ]
-    assert _validate(natural, proposal)["summary_sentences"] == natural["summary_sentences"]
-
-    numbered = high_analysis()
-    numbered["summary_sentences"] = ["Action 0 replaces the PairAdder."]
-    with pytest.raises(AuditError, match="Telegram summary"):
-        _validate(numbered, proposal)
+    natural["summary"] = (
+        "Action 0 replaces the PairAdder.\n"
+        "The new path remains bounded by Core permissions; see https://example.invalid."
+    )
+    assert _validate(natural, proposal)["summary"] == natural["summary"]
 
     unknown_low = low_analysis()
     unknown_low["unknowns"] = ["Execution could not be simulated."]
-    with pytest.raises(AuditError, match="MEDIUM"):
-        _validate(unknown_low, proposal)
+    assert _validate(unknown_low, proposal)["severity"] == "MEDIUM"
 
     linked = high_analysis()
     linked["findings"] = ["See https://evil.example for details."]
-    with pytest.raises(AuditError, match="invalid findings"):
-        _validate(linked, proposal)
-
-    multiline = high_analysis()
-    multiline["actions"][0]["effect"] = "First line.\nSecond line."
-    with pytest.raises(AuditError, match="incomplete action"):
-        _validate(multiline, proposal)
+    assert _validate(linked, proposal)["findings"] == linked["findings"]
 
 
 def test_telegram_is_compact_and_orders_metadata_audit_then_links() -> None:
@@ -575,7 +542,7 @@ def test_logging_enables_only_govlens_info() -> None:
             logger.setLevel(level)
 
 
-def test_low_severity_does_not_publish_or_send(tmp_path: Path) -> None:
+def test_low_severity_publishes_and_sends(tmp_path: Path) -> None:
     proposal = replace(proposal_23(), id=0)
     source = FakeSource([proposal])
     gist = FakeGist()
@@ -585,15 +552,61 @@ def test_low_severity_does_not_publish_or_send(tmp_path: Path) -> None:
 
     result = run_once(store, [source], lambda _: low_analysis(), gist, {"resupply": telegram})  # type: ignore[list-item, arg-type]
 
-    assert result["published"] == 0
-    assert result["sent"] == 0
-    assert gist.markdown == []
-    assert telegram.messages == []
+    assert result["published"] == 1
+    assert result["sent"] == 1
+    assert len(gist.markdown) == 1
+    assert len(telegram.messages) == 1
     status = store.connection.execute(
         "SELECT status FROM proposals WHERE protocol='resupply' "
         "AND source='resupply' AND upstream_id=0"
     ).fetchone()[0]
-    assert status == "no_alert"
+    assert status == "sent"
+    store.close()
+
+
+def test_fallback_analysis_is_saved_delivered_and_not_retried(tmp_path: Path) -> None:
+    proposal = replace(proposal_23(), id=0)
+    source = FakeSource([proposal])
+    gist = FakeGist()
+    telegram = FakeTelegram()
+    store = Store(tmp_path / "state.db")
+    store.initialize("resupply", "resupply", 0)
+    attempts = 0
+
+    def audit(_proposal: Proposal) -> dict[str, Any]:
+        nonlocal attempts
+        attempts += 1
+        return {
+            "severity": "MEDIUM",
+            "summary": "Automated analysis was incomplete, so manual review is required.",
+            "findings": [],
+            "unknowns": ["The Codex investigation did not return a usable result."],
+            "checks": [],
+        }
+
+    first = run_once(
+        store,
+        [source],
+        audit,
+        gist,
+        {"resupply": telegram},  # type: ignore[dict-item]
+    )
+    second = run_once(
+        store,
+        [source],
+        audit,
+        gist,
+        {"resupply": telegram},  # type: ignore[dict-item]
+    )
+
+    assert attempts == 1
+    assert first["published"] == 1
+    assert first["sent"] == 1
+    assert second["published"] == 0
+    assert second["sent"] == 0
+    assert len(gist.markdown) == 1
+    assert len(telegram.messages) == 1
+    assert store.status_counts() == {"sent": 1}
     store.close()
 
 

@@ -161,16 +161,6 @@ def run_once(
                 analysis["severity"],
                 round((time.monotonic() - analysis_started) * 1_000),
             )
-        if analysis["severity"] == "LOW":
-            store.no_alert(key)
-            LOG.info(
-                "event=proposal_completed protocol=%s source=%s proposal=%d outcome=no_alert",
-                key.protocol,
-                key.source,
-                key.upstream_id,
-            )
-            continue
-
         telegram = telegrams.get(key.protocol)
         if telegram is None:
             failures += 1

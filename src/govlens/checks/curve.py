@@ -1,4 +1,4 @@
-"""Curve gauge-add checks against the deployed deterministic validator."""
+"""Curve gauge-add checks against the deployed canonical validator."""
 
 from __future__ import annotations
 

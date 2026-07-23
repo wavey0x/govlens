@@ -40,7 +40,7 @@ def build_report(
         "",
         "## Summary",
         "",
-        " ".join(_markdown(item) for item in analysis["summary_sentences"]),
+        _markdown(analysis["summary"]),
         "",
         "## Proposal",
         "",
@@ -82,8 +82,8 @@ def build_report(
             )
         )
 
-    lines.append("## Action analysis")
-    for action, assessment in zip(proposal.actions, analysis["actions"], strict=True):
+    lines.append("## Actions")
+    for action in proposal.actions:
         lines.extend(
             (
                 "",
@@ -104,19 +104,11 @@ def build_report(
             lines.extend(("", "**Exact raw action bytes:**", "", "```text", action.raw, "```"))
         if action.unresolved:
             lines.extend(("", f"**Unresolved:** {_markdown(action.unresolved)}"))
-        lines.extend(
-            (
-                "",
-                f"**Effect:** {_markdown(assessment['effect'])}",
-                "",
-                f"**Risk:** {_markdown(assessment['risk'])}",
-            )
-        )
 
     lines.extend(("", "## Protocol checks", ""))
     checks = analysis.get("checks", [])
     if not checks:
-        lines.append("No deterministic check applied.")
+        lines.append("No canonical protocol check applied.")
     for check in checks:
         lines.extend(
             (

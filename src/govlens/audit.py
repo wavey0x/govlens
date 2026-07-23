@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -30,52 +29,30 @@ SEVERITIES = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
 LOG = logging.getLogger(__name__)
 RESULT_KEYS = {
     "severity",
-    "summary_sentences",
-    "actions",
+    "summary",
     "findings",
     "unknowns",
 }
-LINK_PATTERN = re.compile(r"(?:[a-z][a-z0-9+.-]*://|www\.)", re.IGNORECASE)
-NUMBERED_ACTION_PATTERN = re.compile(r"\bactions?\s+#?\d+\b", re.IGNORECASE)
 SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "severity": {"type": "string", "enum": list(SEVERITIES)},
-        "summary_sentences": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 3,
-            "items": {"type": "string", "minLength": 1, "maxLength": 500},
-        },
-        "actions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "index": {"type": "integer", "minimum": 0},
-                    "effect": {"type": "string", "maxLength": 1_000},
-                    "risk": {"type": "string", "maxLength": 600},
-                },
-                "required": ["index", "effect", "risk"],
-            },
-        },
+        "summary": {"type": "string", "minLength": 1, "maxLength": 1_000},
         "findings": {
             "type": "array",
-            "items": {"type": "string", "maxLength": 1_000},
+            "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
             "maxItems": 8,
         },
         "unknowns": {
             "type": "array",
-            "items": {"type": "string", "maxLength": 800},
+            "items": {"type": "string", "minLength": 1, "maxLength": 800},
             "maxItems": 8,
         },
     },
     "required": [
         "severity",
-        "summary_sentences",
-        "actions",
+        "summary",
         "findings",
         "unknowns",
     ],
@@ -105,8 +82,13 @@ finding a thread is not itself a risk signal.
 
 Account for every action and byte in order and compare claimed intent with
 execution. For component or authority changes, reason about the resulting
-configuration and real caller path. Use traces or forks when they materially
-strengthen the verdict; direct owner impersonation does not prove a nested path
+configuration and real caller path. Make a best-effort creation-block fork
+execution of every ordered payload through the protocol's real authorized
+execution boundary. Check top-level and nested reverts and verify that material
+post-state matches intent. Reproducing routine ballot mechanics is unnecessary
+unless they change or affect execution. If a faithful simulation is unavailable
+or cannot finish, keep that as an unknown rather than treating static analysis
+as execution proof. Direct owner impersonation does not prove a nested path
 works. Treat simulation as evidence, not proof, and report its block, caller,
 result, effects, and limits. Never vote, queue, execute, sign, broadcast,
 publish, or send.
@@ -131,38 +113,25 @@ requires at least MEDIUM. Any parent check marked FAIL or UNKNOWN also prevents
 LOW; treat a FAIL as a concrete finding unless a later proposal action clearly
 repairs it.
 
-Return only the schema JSON. Include every action exactly once and in order,
-with actions[].index equal to its zero-based proposal.json index. All other
-fields are plain prose without Markdown or links. Return one to three short
-summary_sentences.
+Return only the schema JSON. The summary is concise enough for a Telegram alert.
+Put material issues in findings and anything unresolved in unknowns. GovLens
+already owns and renders the complete ordered actions, so do not repeat them in
+a separate structured action list.
 
 Write for technical DeFi professionals in clear, natural prose. Use precise
 protocol language where it helps, and explain what changes, why it matters, and
-the main concern. Describe actions by effect rather than by number.
+the main concern.
 """.strip()
 
 
 class AuditError(RuntimeError):
-    pass
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
 
 
-def _plain_text(value: object, limit: int) -> bool:
-    return (
-        isinstance(value, str)
-        and value == value.strip()
-        and 0 < len(value) <= limit
-        and "\n" not in value
-        and "\r" not in value
-        and not LINK_PATTERN.search(value)
-    )
-
-
-def _plain_prose(value: object, limit: int) -> bool:
-    return (
-        isinstance(value, str)
-        and _plain_text(value, limit)
-        and not NUMBERED_ACTION_PATTERN.search(value)
-    )
+def _bounded_text(value: object, limit: int) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= limit
 
 
 def _validate(
@@ -171,47 +140,59 @@ def _validate(
     checks: list[CheckResult] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(result, dict):
-        raise AuditError("investigator returned something other than an object")
+        raise AuditError("invalid_result_object")
     if set(result) != RESULT_KEYS:
-        raise AuditError("investigator returned an invalid result shape")
+        raise AuditError("invalid_result_shape")
     if result.get("severity") not in SEVERITIES:
-        raise AuditError("investigator returned invalid severity")
-    summary = result.get("summary_sentences")
-    if (
-        not isinstance(summary, list)
-        or not 1 <= len(summary) <= 3
-        or not all(_plain_prose(item, 500) for item in summary)
-    ):
-        raise AuditError("investigator returned an invalid Telegram summary")
-    actions = result.get("actions")
-    if (
-        not isinstance(actions, list)
-        or not all(isinstance(item, dict) for item in actions)
-        or not all(
-            set(item) == {"index", "effect", "risk"} and type(item["index"]) is int
-            for item in actions
-        )
-        or [item.get("index") for item in actions] != list(range(len(proposal.actions)))
-    ):
-        raise AuditError("investigator did not account for every action in order")
-    for item in actions:
-        if not (_plain_prose(item["effect"], 1_000) and _plain_prose(item["risk"], 600)):
-            raise AuditError("investigator returned an incomplete action assessment")
+        raise AuditError("invalid_severity")
+    if not _bounded_text(result.get("summary"), 1_000):
+        raise AuditError("invalid_summary")
     limits = {"findings": (8, 1_000), "unknowns": (8, 800)}
     for key, (count, length) in limits.items():
         values = result.get(key)
         if (
             not isinstance(values, list)
             or len(values) > count
-            or not all(_plain_prose(item, length) for item in values)
+            or not all(_bounded_text(item, length) for item in values)
         ):
-            raise AuditError(f"investigator returned invalid {key}")
+            raise AuditError(f"invalid_{key}")
+    validated = {
+        "severity": result["severity"],
+        "summary": result["summary"],
+        "findings": list(result["findings"]),
+        "unknowns": list(result["unknowns"]),
+    }
     unresolved_check = any(check.status != "PASS" for check in checks or [])
-    if (result["unknowns"] or proposal.unknowns or unresolved_check) and result[
-        "severity"
-    ] == "LOW":
-        raise AuditError("remaining unknowns require at least MEDIUM severity")
-    return result
+    if validated["severity"] == "LOW" and (
+        validated["unknowns"] or proposal.unknowns or unresolved_check
+    ):
+        validated["severity"] = "MEDIUM"
+    return validated
+
+
+def _fallback(
+    checks: list[CheckResult],
+    *,
+    checks_failed: bool = False,
+) -> dict[str, Any]:
+    findings = list(dict.fromkeys(check.summary for check in checks if check.status == "FAIL"))[:8]
+    unknowns = [
+        (
+            "Deterministic protocol checks could not be completed; automated analysis "
+            "is incomplete and requires manual review."
+            if checks_failed
+            else (
+                "The Codex investigation did not return a usable result; manual review is required."
+            )
+        )
+    ]
+    return {
+        "severity": "MEDIUM",
+        "summary": ("Automated analysis was incomplete, so this proposal requires manual review."),
+        "findings": findings,
+        "unknowns": unknowns,
+        "checks": [check.as_dict() for check in checks],
+    }
 
 
 def _environment(settings: Settings) -> dict[str, str]:
@@ -237,49 +218,22 @@ def _environment(settings: Settings) -> dict[str, str]:
     return environment
 
 
-def investigate(settings: Settings, proposal: Proposal) -> dict[str, Any]:
+def _run_codex(
+    settings: Settings,
+    proposal: Proposal,
+    checks: list[CheckResult],
+) -> dict[str, Any]:
     if not settings.codex.is_file():
-        raise AuditError("Codex is not installed at the configured path")
+        raise AuditError("codex_missing")
     helper_root = Path(__file__).with_name("investigator")
     if not (helper_root / "lib").is_dir():
-        raise AuditError("checked-in investigator helpers are missing")
+        raise AuditError("investigator_helpers_missing")
     context_name = CONTEXT_FILES.get(proposal.protocol)
     if context_name is None:
-        raise AuditError("checked-in protocol investigation context is missing")
+        raise AuditError("protocol_context_missing")
     context_path = helper_root / "contexts" / context_name
     if not context_path.is_file():
-        raise AuditError("checked-in protocol investigation context is missing")
-
-    evidence_web3 = Web3(
-        Web3.HTTPProvider(settings.archive_rpc_url, request_kwargs={"timeout": 60})
-    )
-    checks_started = time.monotonic()
-    LOG.info(
-        "event=checks_started protocol=%s source=%s proposal=%d",
-        proposal.protocol,
-        proposal.source,
-        proposal.id,
-    )
-    try:
-        checks = run_checks(proposal, evidence_web3)
-    except Exception as exc:
-        LOG.error(
-            "event=checks_failed protocol=%s source=%s proposal=%d error=%s duration_ms=%d",
-            proposal.protocol,
-            proposal.source,
-            proposal.id,
-            type(exc).__name__,
-            round((time.monotonic() - checks_started) * 1_000),
-        )
-        raise
-    LOG.info(
-        "event=checks_completed protocol=%s source=%s proposal=%d statuses=%s duration_ms=%d",
-        proposal.protocol,
-        proposal.source,
-        proposal.id,
-        ",".join(f"{check.id}:{check.status}" for check in checks) or "none",
-        round((time.monotonic() - checks_started) * 1_000),
-    )
+        raise AuditError("protocol_context_missing")
 
     environment = _environment(settings)
     with tempfile.TemporaryDirectory(prefix="govlens-audit-") as temporary:
@@ -356,7 +310,7 @@ def investigate(settings: Settings, proposal: Proposal) -> dict[str, Any]:
                 proposal.id,
                 round((time.monotonic() - codex_started) * 1_000),
             )
-            raise AuditError("investigation timed out") from exc
+            raise AuditError("codex_timeout") from exc
         if completed.returncode != 0 or not output_path.is_file() or output_path.is_symlink():
             LOG.error(
                 "event=codex_failed protocol=%s source=%s proposal=%d returncode=%d "
@@ -368,7 +322,7 @@ def investigate(settings: Settings, proposal: Proposal) -> dict[str, Any]:
                 output_path.is_file(),
                 round((time.monotonic() - codex_started) * 1_000),
             )
-            raise AuditError("Codex investigation failed")
+            raise AuditError("codex_failed")
         LOG.info(
             "event=codex_completed protocol=%s source=%s proposal=%d duration_ms=%d",
             proposal.protocol,
@@ -378,10 +332,10 @@ def investigate(settings: Settings, proposal: Proposal) -> dict[str, Any]:
         )
         try:
             if output_path.stat().st_size > MAX_RESULT_BYTES:
-                raise AuditError("investigator result exceeded the size limit")
+                raise AuditError("result_too_large")
             text = output_path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
-            raise AuditError("investigator result could not be read") from exc
+            raise AuditError("result_unreadable") from exc
         secrets = (
             settings.rpc_url,
             settings.archive_rpc_url,
@@ -391,27 +345,78 @@ def investigate(settings: Settings, proposal: Proposal) -> dict[str, Any]:
             *settings.telegram_targets.values(),
         )
         if any(secret and secret in text for secret in secrets):
-            raise AuditError("investigator output contained a credential")
+            raise AuditError("credential_in_result")
         try:
-            result = _validate(json.loads(text), proposal, checks)
-            result["checks"] = [check.as_dict() for check in checks]
-            LOG.info(
-                "event=analysis_validated protocol=%s source=%s proposal=%d severity=%s "
-                "unknowns=%d",
-                proposal.protocol,
-                proposal.source,
-                proposal.id,
-                result["severity"],
-                len(result["unknowns"]) + len(proposal.unknowns),
-            )
-            return result
-        except AuditError:
-            LOG.error(
-                "event=analysis_rejected protocol=%s source=%s proposal=%d",
-                proposal.protocol,
-                proposal.source,
-                proposal.id,
-            )
-            raise
+            raw_result = json.loads(text)
         except (json.JSONDecodeError, TypeError) as exc:
-            raise AuditError("investigator returned invalid JSON") from exc
+            raise AuditError("invalid_json") from exc
+        original_severity = raw_result.get("severity") if isinstance(raw_result, dict) else None
+        result = _validate(raw_result, proposal, checks)
+        if original_severity == "LOW" and result["severity"] == "MEDIUM":
+            LOG.info(
+                "event=risk_promoted protocol=%s source=%s proposal=%d from=LOW to=MEDIUM",
+                proposal.protocol,
+                proposal.source,
+                proposal.id,
+            )
+        result["checks"] = [check.as_dict() for check in checks]
+        LOG.info(
+            "event=analysis_validated protocol=%s source=%s proposal=%d severity=%s unknowns=%d",
+            proposal.protocol,
+            proposal.source,
+            proposal.id,
+            result["severity"],
+            len(result["unknowns"]) + len(proposal.unknowns),
+        )
+        return result
+
+
+def investigate(settings: Settings, proposal: Proposal) -> dict[str, Any]:
+    evidence_web3 = Web3(
+        Web3.HTTPProvider(settings.archive_rpc_url, request_kwargs={"timeout": 60})
+    )
+    checks_started = time.monotonic()
+    LOG.info(
+        "event=checks_started protocol=%s source=%s proposal=%d",
+        proposal.protocol,
+        proposal.source,
+        proposal.id,
+    )
+    try:
+        checks = run_checks(proposal, evidence_web3)
+    except Exception as exc:
+        LOG.error(
+            "event=checks_failed protocol=%s source=%s proposal=%d error=%s duration_ms=%d",
+            proposal.protocol,
+            proposal.source,
+            proposal.id,
+            type(exc).__name__,
+            round((time.monotonic() - checks_started) * 1_000),
+        )
+        LOG.warning(
+            "event=analysis_fallback protocol=%s source=%s proposal=%d reason=checks_failed",
+            proposal.protocol,
+            proposal.source,
+            proposal.id,
+        )
+        return _fallback([], checks_failed=True)
+    LOG.info(
+        "event=checks_completed protocol=%s source=%s proposal=%d statuses=%s duration_ms=%d",
+        proposal.protocol,
+        proposal.source,
+        proposal.id,
+        ",".join(f"{check.id}:{check.status}" for check in checks) or "none",
+        round((time.monotonic() - checks_started) * 1_000),
+    )
+
+    try:
+        return _run_codex(settings, proposal, checks)
+    except AuditError as exc:
+        LOG.warning(
+            "event=analysis_fallback protocol=%s source=%s proposal=%d reason=%s",
+            proposal.protocol,
+            proposal.source,
+            proposal.id,
+            exc.code,
+        )
+        return _fallback(checks)

@@ -18,13 +18,14 @@ untrusted context; the executable payload remains authoritative.
 ## Execution model
 
 Voter payload entries execute through Core. Registry addresses are dynamic, so
-the parent pair check resolves `PAIR_DEPLOYER` at the proposal creation block.
+resolve them at the proposal creation block and account for any changes made by
+earlier actions.
 
 ## Pair changes
 
 Follow Registry address and Core permission changes in order. When a PairAdder
 is installed or reconfigured, exercise the intended path: Voter → Core.execute
 → PairAdder.addPair → Core.execute → Registry. Directly impersonating Core does
-not prove this nested path works. A passing PairDeployer check proves only that
-the proposed pair came from the Registry-selected deployer; it does not prove
-the permissions or nested execution path.
+not prove this nested path works. For in-proposal deployments, verify the
+deployer's returned address against subsequent registration actions in the same
+ordered simulation; a creation-block `deployInfo` read alone is insufficient.

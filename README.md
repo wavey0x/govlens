@@ -1,9 +1,9 @@
 # GovLens
 
 GovLens is a read-only governance proposal watcher. It discovers finalized
-proposals, preserves every action byte, runs deterministic protocol checks,
-asks Codex for a focused audit, and alerts Telegram when risk is `MEDIUM` or
-higher.
+proposals, preserves every action byte, runs narrow canonical protocol checks,
+asks Codex for a focused audit, and publishes a Gist and Telegram alert for
+every normalized proposal.
 
 Supported sources:
 
@@ -21,8 +21,9 @@ The production system is deliberately small:
 - one Python application;
 - one SQLite database;
 - one scheduled command;
-- explicit protocol readers and deterministic checks;
+- explicit protocol readers and narrow canonical checks;
 - one isolated, protocol-neutral audit flow;
+- creation-block execution simulation with Anvil;
 - Gist and Telegram as the only external writes.
 
 Proposal actions are read at finalized Ethereum state and checked against their
