@@ -225,7 +225,7 @@ govlens test --protocol curve --source ownership --proposal 1458
 ```
 
 `test` is read-only unless `--send` is explicitly supplied. `--send` publishes a
-new Gist and sends one marked test alert, so it requires separate authorization.
+new Gist and sends one replay alert, so it requires separate authorization.
 
 ## Verification
 

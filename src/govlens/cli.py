@@ -60,7 +60,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="govlens")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("run", help="check once for new proposals")
-    test = commands.add_parser("test", help="replay a proposal as a test alert")
+    test = commands.add_parser("test", help="replay a proposal")
     test.add_argument("--protocol", choices=("resupply", "curve"), default="resupply")
     test.add_argument("--source", choices=("ownership", "parameter"))
     test.add_argument("--proposal", type=int, help="proposal number; defaults to latest")
@@ -191,7 +191,7 @@ def _test(
         if not send:
             print(markdown)
             print("--- TELEGRAM PREVIEW — NO EXTERNAL WRITES ---")
-            print(build_message(source.protocol, proposal, analysis, None, test=True))
+            print(build_message(source.protocol, proposal, analysis, None))
             return 0
 
         telegram = _telegram(settings, protocol_slug)
@@ -205,7 +205,6 @@ def _test(
                 proposal,
                 analysis,
                 published.url,
-                test=True,
             )
             message_id = telegram.send(message)
         finally:

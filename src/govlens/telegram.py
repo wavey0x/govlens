@@ -28,8 +28,6 @@ def build_message(
     proposal: Proposal,
     analysis: dict[str, Any],
     gist_url: str | None,
-    *,
-    test: bool = False,
 ) -> str:
     validate_presentation(protocol, proposal)
     severity = str(analysis["severity"])
@@ -37,8 +35,6 @@ def build_message(
     name = protocol.name
     if proposal.source != proposal.protocol:
         name = f"{name} {proposal.source.title()}"
-    if test:
-        lines.extend(("🧪 <b>TEST · CURRENT ALERT REPLAY</b>", ""))
     lines.extend(
         (
             f"📜 <b>New {html.escape(name)} Proposal Created</b>",

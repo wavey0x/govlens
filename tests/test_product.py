@@ -213,9 +213,10 @@ def test_investigation_uses_a_small_contract_without_prose_rules() -> None:
 
 def test_telegram_is_compact_and_orders_metadata_audit_then_links() -> None:
     protocol = presentation_for("resupply")
-    message = build_message(protocol, proposal_23(), high_analysis(), GIST_URL, test=True)
+    message = build_message(protocol, proposal_23(), high_analysis(), GIST_URL)
 
     assert "New Resupply Proposal Created" in message
+    assert "CURRENT ALERT REPLAY" not in message
     assert "Proposal 23:" in message
     assert "0xB813…61b6" in message
     assert "Quorum Required:</b> 7,647,591" in message
